@@ -1,4 +1,4 @@
-ARG PHP_VERSION=8.1
+ARG PHP_VERSION=8.2
 ARG BAK_STORAGE_PATH=/var/www/app/docker-backup-storage/
 ARG BAK_PUBLIC_PATH=/var/www/app/docker-backup-public/
 
@@ -14,15 +14,19 @@ RUN set -eux; apk add curl unzip
 # Extract Invoice Ninja
 RUN mkdir -p /var/www/app \
     && tar --strip-components=1 -xf /tmp/ninja.tar.gz -C /var/www/app/ \
-    && mkdir -p /var/www/app/public/logo /var/www/app/storage \
-    && mv /var/www/app/.env.example /var/www/app/.env \
-    && rm -rf /var/www/app/docs /var/www/app/tests
-
+    && mkdir -p /var/www/app/public/logo /var/www/app/storage
+    
 # Download and extract the latest react application
 RUN curl -LGO $(curl https://api.github.com/repos/invoiceninja/ui/releases/latest | grep "browser_download_url" | awk '{ print $2 }' | sed 's/,$//' | sed 's/"//g');
 RUN cp invoiceninja-react.zip /tmp/invoiceninja-react.zip
 RUN unzip /tmp/invoiceninja-react.zip 
+RUN mkdir  /var/www/app/public/react/v$INVOICENINJA_VERSION/
+RUN cp -r dist/react/* /var/www/app/public/react/v$INVOICENINJA_VERSION/
 RUN cp -r dist/react/* /var/www/app/public/react/
+          
+RUN mkdir -p /var/www/app/public/tinymce_6.4.2/tinymce/js/
+RUN cp -r dist/tinymce_6.4.2/* /var/www/app/public/tinymce_6.4.2/
+
 # Download and extract the latest react application
 # 
 WORKDIR /var/www/app/
@@ -31,13 +35,13 @@ WORKDIR /var/www/app/
 ARG BAK_STORAGE_PATH
 ARG BAK_PUBLIC_PATH
 RUN --mount=target=/var/www/app/node_modules,type=cache \
-    npm install --production \
+    npm install \
     && npm run production \
     && mv /var/www/app/storage $BAK_STORAGE_PATH \
     && mv /var/www/app/public $BAK_PUBLIC_PATH  
 
 # Prepare php image
-FROM php:${PHP_VERSION}-fpm-alpine3.15 as prod
+FROM php:${PHP_VERSION}-fpm-alpine as prod
 
 LABEL maintainer="David Bomba <turbo124@gmail.com>"
 
@@ -51,6 +55,16 @@ RUN mv /usr/local/etc/php/php.ini-production /usr/local/etc/php/php.ini
 # https://hub.docker.com/r/mlocati/php-extension-installer/tags
 COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
 
+# Install chromium
+RUN set -eux; \
+    apk add --no-cache \
+    font-isas-misc \
+    supervisor \
+    mysql-client \
+    git \
+    chromium \
+    ttf-freefont
+
 RUN install-php-extensions \
     bcmath \
     exif \
@@ -62,16 +76,6 @@ RUN install-php-extensions \
     zip \
     @composer \
     && rm /usr/local/bin/install-php-extensions
-
-# Install chromium
-RUN set -eux; \
-    apk add --no-cache \
-    font-isas-misc \
-    supervisor \
-    mysql-client \
-    git \
-    chromium \
-    ttf-freefont
 
 # Copy files
 COPY rootfs /
@@ -102,7 +106,8 @@ WORKDIR /var/www/app
 
 # Do not remove this ENV
 ENV IS_DOCKER true
-RUN /usr/local/bin/composer install --no-dev --quiet
+RUN /usr/local/bin/composer install --no-dev --no-scripts --no-interaction 
+RUN /usr/local/bin/composer dump-autoload --optimize --no-dev --classmap-authoritative --no-scripts --no-interaction 
 
 # Override the environment settings from projects .env file
 ENV APP_ENV production
